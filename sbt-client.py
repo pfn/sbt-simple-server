@@ -21,3 +21,4 @@ try:
     sys.exit(int(r))
 except Exception as e:
     print "sbt server not running in the current project: %s" % e
+    sys.exit(-2)
