@@ -1,7 +1,7 @@
 package sbtsimpleserver
 
-import java.io.BufferedReader
-import java.net.{InetAddress, ServerSocket}
+import java.io.{BufferedReader, Closeable}
+import java.net.{InetAddress, ServerSocket, SocketException}
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{BlockingQueue, Executors, LinkedBlockingQueue}
 
@@ -23,7 +23,7 @@ object SimpleServerPlugin extends AutoPlugin {
                         shell: State => ServerCommand[_],
                         lock: Lock,
                         running: AtomicBoolean,
-                        server: Option[Thread])
+                        server: Option[Closeable])
 
   val serverSetup = AttributeKey[ServerData]("sbt-server-setup", "internal server data")
   val serverResult = AttributeKey[ServerCommand[_]]("sbt-server-result", "internal current command server data")
@@ -41,13 +41,15 @@ object SimpleServerPlugin extends AutoPlugin {
   override def globalSettings = Seq(
     onLoad := onLoad.value andThen { s =>
       val (xs, ys) = s.remainingCommands.span(_ != "iflast shell")
-      if (ys.headOption.exists(_ == "iflast shell") && s.get(serverSetup).isEmpty) {
-        val s2 = s.copy(remainingCommands = xs ++ Seq("iflast " + ShellCommand) ++ ys.drop(1))
+      if ((ys.headOption.exists(_ == "iflast shell") || s.remainingCommands.contains("server-shell")) && s.get(serverSetup).isEmpty) {
+        val s2 = s.copy(remainingCommands = if (s.remainingCommands.contains("server-shell")) s.remainingCommands else xs ++ Seq("iflast " + ShellCommand) ++ ys.drop(1))
         val lock = new Lock()
         val queue = new LinkedBlockingQueue[ServerCommand[_]](10)
         val running = new AtomicBoolean(true)
-        val server = startNetworkRepl(s, queue, lock, running)
-        val sd = ServerData(queue, startShellRepl(s2, queue, lock, running), lock, running, server)
+        val sd = ServerData(queue,
+          startShellRepl(s2, queue, lock, running),
+          lock, running,
+          startNetworkRepl(s, queue, lock, running))
         s2.put(serverSetup, sd)
       } else s
     },
@@ -55,7 +57,7 @@ object SimpleServerPlugin extends AutoPlugin {
       s.get(serverSetup) foreach { sd =>
         sd.running.set(false)
         sd.lock.release()
-        sd.server.foreach(_.interrupt())
+        sd.server.foreach(_.close())
       }
       s.remove(serverSetup)
     }
@@ -121,7 +123,7 @@ object SimpleServerPlugin extends AutoPlugin {
   }
 
   val PORT_MAX = (2 << 16) - 1
-  def startNetworkRepl(s: State, queue: BlockingQueue[ServerCommand[_]], lock: Lock, running: AtomicBoolean): Option[Thread] = {
+  def startNetworkRepl(s: State, queue: BlockingQueue[ServerCommand[_]], lock: Lock, running: AtomicBoolean): Option[Closeable] = {
     val hash = Hash(s.baseDir.getCanonicalPath)
     implicit val ec: ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(4))
     val port = hash.zip(hash.tail).collectFirst {
@@ -151,7 +153,7 @@ object SimpleServerPlugin extends AutoPlugin {
                         val promise = Promise[Boolean]()
                         queue.put(ServerCommand(Option(read), promise.success))
                         lock.release()
-                        val res = Await.result(promise.future, concurrent.duration.Duration.Inf)
+                        val res = Await.result(promise.future, duration.Duration.Inf)
                         o.write((if (res) 0 else 1).toString.getBytes(IO.utf8))
                         o.flush()
                       }
@@ -161,15 +163,13 @@ object SimpleServerPlugin extends AutoPlugin {
                   sock.close()
                 }
               }
-            } catch {
-              case e: InterruptedException =>
-            }
+            } catch { case e: SocketException => }
           }
+          socket.close()
         }
       }
-      val t = new Thread(SocketReader, "SBT server network reader")
-      t.start()
-      t
+      new Thread(SocketReader, "SBT server network reader").start()
+      socket
     }
 
   }
