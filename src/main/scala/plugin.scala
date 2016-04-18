@@ -28,7 +28,7 @@ object SimpleServerPlugin extends AutoPlugin {
 
   val updateCheck = TaskKey[Unit]("update-check", "Check for a new version of the plugin")
   val serverSetup = AttributeKey[ServerData]("sbt-server-setup", "internal server data")
-  val serverResult = AttributeKey[ServerCommand[_]]("sbt-server-result", "internal current command server data")
+  val serverResult = AttributeKey[ServerCommand[_]]("sbt-server-result", "internal current command data")
 
   override def trigger = allRequirements
   override def requires = plugins.JvmPlugin
@@ -37,8 +37,8 @@ object SimpleServerPlugin extends AutoPlugin {
   val FailedShellCommand = ShellCommand + "-failed"
 
   override def buildSettings = Seq(
-    commands ++= Seq(serverAndShell, failedServerAndShell),
-    updateCheck              := {
+    commands    ++= Seq(serverAndShell, failedServerAndShell),
+    updateCheck  := {
       val log = Keys.streams.value.log
       UpdateChecker("pfn", "sbt-plugins", "sbt-simple-server") {
         case Left(t) =>
