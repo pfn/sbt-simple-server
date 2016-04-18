@@ -4,7 +4,7 @@ name := "sbt-simple-server"
 
 organization := "com.hanhuy.sbt"
 
-version := "0.3-SNAPSHOT"
+version := "0.3"
 
 scalacOptions ++= Seq("-deprecation","-Xlint","-feature")
 
