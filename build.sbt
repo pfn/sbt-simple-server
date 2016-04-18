@@ -4,9 +4,17 @@ name := "sbt-simple-server"
 
 organization := "com.hanhuy.sbt"
 
-version := "0.2"
+version := "0.3-SNAPSHOT"
 
 scalacOptions ++= Seq("-deprecation","-Xlint","-feature")
+
+libraryDependencies += "com.hanhuy.sbt" %% "bintray-update-checker" % "0.1"
+
+buildInfoSettings
+
+buildInfoPackage := "sbtsimpleserver"
+
+sourceGenerators in Compile <+= buildInfo
 
 sbtPlugin := true
 

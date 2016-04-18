@@ -11,6 +11,7 @@ import Keys.commands
 import BasicKeys._
 import Keys.onLoad
 import Keys.onUnload
+import com.hanhuy.sbt.bintray.UpdateChecker
 
 import scala.concurrent._
 import scala.util.Try
@@ -25,6 +26,7 @@ object SimpleServerPlugin extends AutoPlugin {
                         running: AtomicBoolean,
                         server: Option[Closeable])
 
+  val updateCheck = TaskKey[Unit]("update-check", "Check for a new version of the plugin")
   val serverSetup = AttributeKey[ServerData]("sbt-server-setup", "internal server data")
   val serverResult = AttributeKey[ServerCommand[_]]("sbt-server-result", "internal current command server data")
 
@@ -35,23 +37,36 @@ object SimpleServerPlugin extends AutoPlugin {
   val FailedShellCommand = ShellCommand + "-failed"
 
   override def buildSettings = Seq(
-    commands ++= Seq(serverAndShell, failedServerAndShell)
+    commands ++= Seq(serverAndShell, failedServerAndShell),
+    updateCheck              := {
+      val log = Keys.streams.value.log
+      UpdateChecker("pfn", "sbt-plugins", "sbt-simple-server") {
+        case Left(t) =>
+          log.debug("Failed to load version info: " + t)
+        case Right((versions, current)) =>
+          log.debug("available versions: " + versions)
+          log.debug("current version: " + BuildInfo.version)
+          log.debug("latest version: " + current)
+          if (versions(BuildInfo.version)) {
+            if (BuildInfo.version != current) {
+              log.warn(
+                s"UPDATE: A newer sbt-simple-server is available:" +
+                  s" $current, currently running: ${BuildInfo.version}")
+            }
+          }
+      }
+    }
   )
 
   override def globalSettings = Seq(
     onLoad := onLoad.value andThen { s =>
-      val (xs, ys) = s.remainingCommands.span(_ != "iflast shell")
-      if ((ys.headOption.exists(_ == "iflast shell") || s.remainingCommands.contains("server-shell")) && s.get(serverSetup).isEmpty) {
-        val s2 = s.copy(remainingCommands = if (s.remainingCommands.contains("server-shell")) s.remainingCommands else xs ++ Seq("iflast " + ShellCommand) ++ ys.drop(1))
-        val lock = new Lock()
-        val queue = new LinkedBlockingQueue[ServerCommand[_]](10)
-        val running = new AtomicBoolean(true)
-        val sd = ServerData(queue,
-          startShellRepl(s2, queue, lock, running),
-          lock, running,
-          startNetworkRepl(s, queue, lock, running))
-        s2.put(serverSetup, sd)
-      } else s
+      s.copy(remainingCommands = s.remainingCommands.map {
+        case "iflast shell" => s"iflast $ShellCommand"
+        case "shell"        => ShellCommand
+        case x              => x
+      })
+    } andThen { s =>
+      Project.extract(s).runTask(updateCheck, s)._1
     },
     onUnload := onUnload.value andThen { s =>
       s.get(serverSetup) foreach { sd =>
@@ -65,22 +80,32 @@ object SimpleServerPlugin extends AutoPlugin {
 
   def serverAndShell = Command.command(ShellCommand, Help.more(Shell, ShellDetailed)) { s =>
     s.get(serverResult).foreach(_.result(true))
-    s get serverSetup map { sd =>
+    val serverState = s.get(serverSetup).fold {
+      val lock = new Lock()
+      val queue = new LinkedBlockingQueue[ServerCommand[_]](10)
+      val running = new AtomicBoolean(true)
+      val sd = ServerData(queue,
+        startShellRepl(s, queue, lock, running),
+        lock, running,
+        startNetworkRepl(s, queue, lock, running))
+      s.put(serverSetup, sd)
+    }(_ => s)
+    serverState get serverSetup map { sd =>
 
       sd.lock.release()
-      val resultObject = sd.shell(s)
+      val resultObject = sd.shell(serverState)
       val read = resultObject.command
       sd.lock.acquire()
 
       read match {
         case Some(line) =>
-          val newState = s.put(serverResult, resultObject).copy(
+          val newState = serverState.put(serverResult, resultObject).copy(
             onFailure = Some(FailedShellCommand),
-            remainingCommands = line +: ShellCommand +: s.remainingCommands).setInteractive(true)
+            remainingCommands = line +: ShellCommand +: serverState.remainingCommands).setInteractive(true)
           if (line.trim.isEmpty) newState else newState.clearGlobalLog
-        case None => s.setInteractive(false)
+        case None => serverState.setInteractive(false)
       }
-    } getOrElse s
+    } getOrElse serverState
   }
   def failedServerAndShell = Command.command(FailedShellCommand, Help.more(Shell, ShellDetailed)) { s =>
     s.get(serverResult).foreach(_.result(false))
