@@ -5,7 +5,7 @@ Simple SBT server plugin
 ## Usage
 
 * In `project/plugins.sbt`
-`addSbtPlugin("com.hanhuy.sbt" % "sbt-simple-server" % "0.3")`
+  `addSbtPlugin("com.hanhuy.sbt" % "sbt-simple-server" % "0.4")`
 * `disablePlugins(SimpleServerPlugin)` if desired, otherwise it will be
   automatically enabled
 * Run and use SBT like normal

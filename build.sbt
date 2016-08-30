@@ -4,11 +4,11 @@ name := "sbt-simple-server"
 
 organization := "com.hanhuy.sbt"
 
-version := "0.3"
+version := "0.4"
 
 scalacOptions ++= Seq("-deprecation","-Xlint","-feature")
 
-libraryDependencies += "com.hanhuy.sbt" %% "bintray-update-checker" % "0.1"
+libraryDependencies += "com.hanhuy.sbt" %% "bintray-update-checker" % "0.2"
 
 buildInfoSettings
 
